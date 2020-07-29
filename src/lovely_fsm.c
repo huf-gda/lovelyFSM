@@ -22,8 +22,6 @@ typedef struct lfsm_context_t {
     void*   user_data;
     lfsm_transitions_t*      transition_table;
     lfsm_state_functions_t*  functions_table;
-    lfsm_transitions_t**     transition_lookup_table;
-    lfsm_state_functions_t** function_lookup_table;
 } lfsm_context_t;
 
 typedef struct lfsm_system_t {
@@ -45,12 +43,7 @@ lfsm_return_t lfsm_initialize_buffers(lfsm_t fsm);
 lfsm_return_t lfsm_set_context_buf_callbacks(lfsm_t context, lfsm_buf_callbacks_t buffer_callbacks);
 lfsm_return_t lfsm_set_context_buf_callbacks(lfsm_t new_fsm, lfsm_buf_callbacks_t buffer_callbacks);
 
-void lfsm_bubble_sort_list(lfsm_t context);
 void lfsm_find_state_event_min_max_count(lfsm_t context);
-lfsm_return_t lfsm_alloc_lookup_table(lfsm_t context);
-lfsm_return_t lfsm_fill_transition_lookup_table(lfsm_t context);
-lfsm_return_t lfsm_fill_state_function_lookup_table(lfsm_t context);
-lfsm_transitions_t* lfsm_get_transition_from_lookup(lfsm_context_t* fsm, uint8_t event);
 lfsm_transitions_t* lfsm_find_transition_to_execute(lfsm_context_t* fsm, uint8_t event);
 lfsm_return_t lfsm_execute_transition(lfsm_context_t* fsm, lfsm_transitions_t* transition);
 lfsm_state_functions_t* lfsm_get_state_function(lfsm_context_t* fsm, uint8_t state);
@@ -88,15 +81,10 @@ lfsm_t lfsm_init_func(lfsm_transitions_t* transitions, \
 
         lfsm_set_context_buf_callbacks(new_fsm, buffer_callbacks);
         if (lfsm_initialize_buffers(new_fsm) == LFSM_OK) {
-            // lfsm_bubble_sort_list(new_fsm);
             lfsm_find_state_event_min_max_count(new_fsm);
-            // if (lfsm_alloc_lookup_table(new_fsm) == LFSM_OK) {
-            //     lfsm_fill_transition_lookup_table(new_fsm);
-            //     lfsm_fill_state_function_lookup_table(new_fsm);
-                new_fsm->user_data = user_data;
-                lfsm_run_all_callbacks(new_fsm);
-                return new_fsm;
-            // }
+            new_fsm->user_data = user_data;
+            lfsm_run_all_callbacks(new_fsm);
+            return new_fsm;
         }
     }
     return NULL;
@@ -144,12 +132,7 @@ lfsm_return_t lfsm_run(lfsm_t context) {
     }
 }
 
-// deinitialize the state machine and free reserved memory.
 lfsm_return_t lfsm_deinit(lfsm_t context) {
-    lfsm_context_t* fsm = (lfsm_context_t*)context;
-    free(fsm->transition_lookup_table);
-    free(fsm->function_lookup_table);
-
     memset((unsigned char*)context, 0, sizeof(lfsm_context_t));
     return LFSM_OK;
 }
@@ -227,10 +210,6 @@ int lfsm_get_transition_count(lfsm_t context) {
     lfsm_context_t* details = context;
     return details->transition_count;
 }
-lfsm_transitions_t** lfsm_get_transition_lookup_table(lfsm_t context) {
-    lfsm_context_t* details = context;
-    return details->transition_lookup_table;
-}
 lfsm_state_functions_t* lfsm_get_state_function_table(lfsm_t context) {
     lfsm_context_t* details = context;
     return details->functions_table;
@@ -238,10 +217,6 @@ lfsm_state_functions_t* lfsm_get_state_function_table(lfsm_t context) {
 int lfsm_get_state_function_count(lfsm_t context) {
     lfsm_context_t* details = context;
     return details->state_func_count;
-}
-lfsm_state_functions_t** lfsm_get_state_function_lookup_table(lfsm_t context) {
-    lfsm_context_t* details = context;
-    return details->function_lookup_table;
 }
 int lfsm_get_state_min(lfsm_t context) {
     lfsm_context_t* details = context;
@@ -289,58 +264,9 @@ uint8_t lfsm_read_event(lfsm_t context) {
 }
 
 // --------------------------------------------------------------------------------
-
-
-void swap_elements(lfsm_transitions_t* items, int index_first, int index_second ) {
-    lfsm_transitions_t temp_item;
-    temp_item           = items[index_first];
-    items[index_first]  = items[index_second];
-    items[index_second] = temp_item;
-}
-
-void lfsm_bubble_sort_list(lfsm_t context) {
-    lfsm_transitions_t* sorter;
-    int swap_for_state, swap_for_event, same_state;
-    int list_length = context->transition_count;
-
-    for (int unsorted = list_length - 1; unsorted > 0 ; unsorted--) {
-        sorter = context->transition_table;
-        for (int i = 0; i < unsorted; i++) {
-            swap_for_state = sorter->current_state >  (sorter+1)->current_state;
-            same_state     = sorter->current_state == (sorter+1)->current_state;
-            swap_for_event = sorter->event         >  (sorter+1)->event;
-
-            if (swap_for_state || (same_state && swap_for_event) ) {
-                swap_elements(context->transition_table, i, i+1);
-            }
-            sorter++;
-        }
-    }
-}
-
-lfsm_transitions_t* lfsm_get_transition_from_lookup(lfsm_context_t* fsm, uint8_t event) {
-    lfsm_transitions_t** transition_table = fsm->transition_lookup_table;
-    lfsm_transitions_t* transition_pointer;
-    uint16_t lookup_entry_number;
-
-    int out_of_bounds = (event > fsm->event_number_max) || (event < fsm->event_number_min);
-    if (out_of_bounds) {
-        return NULL;
-    }
-
-    uint16_t current_state = fsm->current_state;
-    uint16_t state_offset = fsm->state_number_min;
-    uint16_t event_offset = fsm->event_number_min;
-    uint16_t event_count = fsm->event_count;
-    lookup_entry_number = (current_state - state_offset) * event_count + event - event_offset;
-    transition_pointer = *(transition_table + lookup_entry_number);
-    return transition_pointer;
-}
-
 // runs through the transition table to find a transition that matches
 // state/event with a 'true' return value on condition.
 lfsm_transitions_t* lfsm_find_transition_to_execute(lfsm_context_t* fsm, uint8_t event) {
-    int more_transitions_for_pair;
     int state_matches, event_matches;
 
     lfsm_transitions_t* transition = fsm->transition_table;
